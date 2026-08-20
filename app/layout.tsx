@@ -19,7 +19,7 @@ export async function generateMetadata(): Promise<Metadata> {
   const protocol = host.includes("localhost") ? "http" : "https";
   const origin = `${protocol}://${host}`;
   const title = "Hexground — Real terrain. Playable tactics.";
-  const description = "Turn a real-world location into a playable tactical hex board.";
+  const description = "Turn a real-world location into one playable tactical hex board or a seamless multi-board mosaic.";
 
   return {
     title,

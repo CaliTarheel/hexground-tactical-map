@@ -1,10 +1,4 @@
-import {
-  BOARD_HEIGHT_METERS,
-  BOARD_WIDTH_METERS,
-  boardToGeo,
-  type BoardPoint,
-  type GeoPoint,
-} from "./map-geometry.ts";
+import { boardDimensions, boardToGeo, type BoardPoint, type GeoPoint } from "./map-geometry.ts";
 
 export const ELEVATION_COLUMNS = 10;
 export const ELEVATION_ROWS = 8;
@@ -14,6 +8,10 @@ export const ELEVATION_LEVEL_INTERVAL_METERS = 4;
 export type ElevationGrid = {
   columns: number;
   rows: number;
+  widthMeters: number;
+  heightMeters: number;
+  boardCols: number;
+  boardRows: number;
   values: number[];
   minimum: number;
   maximum: number;
@@ -23,12 +21,13 @@ export type ElevationGrid = {
   resolutionMeters: number;
 };
 
-export function elevationSampleLocations(center: GeoPoint, bearing: number) {
+export function elevationSampleLocations(center: GeoPoint, bearing: number, boardCols = 1, boardRows = 1) {
+  const dimensions = boardDimensions(boardCols, boardRows);
   return Array.from({ length: ELEVATION_ROWS }, (_, row) =>
     Array.from({ length: ELEVATION_COLUMNS }, (_, column) => {
       const boardPoint = {
-        x: -BOARD_WIDTH_METERS / 2 + (column / (ELEVATION_COLUMNS - 1)) * BOARD_WIDTH_METERS,
-        y: -BOARD_HEIGHT_METERS / 2 + (row / (ELEVATION_ROWS - 1)) * BOARD_HEIGHT_METERS,
+        x: -dimensions.widthMeters / 2 + (column / (ELEVATION_COLUMNS - 1)) * dimensions.widthMeters,
+        y: -dimensions.heightMeters / 2 + (row / (ELEVATION_ROWS - 1)) * dimensions.heightMeters,
       };
       return { boardPoint, geoPoint: boardToGeo(boardPoint, center, bearing) };
     }),
@@ -39,13 +38,20 @@ export function createElevationGrid(
   values: number[],
   source: ElevationGrid["source"] = "Copernicus DEM GLO-90",
   resolutionMeters = 90,
+  boardCols = 1,
+  boardRows = 1,
 ): ElevationGrid | null {
   if (values.length !== ELEVATION_SAMPLE_COUNT || values.some((value) => !Number.isFinite(value))) return null;
+  const dimensions = boardDimensions(boardCols, boardRows);
   const minimum = Math.min(...values);
   const maximum = Math.max(...values);
   return {
     columns: ELEVATION_COLUMNS,
     rows: ELEVATION_ROWS,
+    widthMeters: dimensions.widthMeters,
+    heightMeters: dimensions.heightMeters,
+    boardCols: dimensions.boardCols,
+    boardRows: dimensions.boardRows,
     values,
     minimum,
     maximum,
@@ -61,8 +67,8 @@ function clamped(value: number, minimum: number, maximum: number) {
 }
 
 export function elevationAtPoint(grid: ElevationGrid, point: BoardPoint) {
-  const columnPosition = clamped((point.x / BOARD_WIDTH_METERS + 0.5) * (grid.columns - 1), 0, grid.columns - 1);
-  const rowPosition = clamped((point.y / BOARD_HEIGHT_METERS + 0.5) * (grid.rows - 1), 0, grid.rows - 1);
+  const columnPosition = clamped((point.x / grid.widthMeters + 0.5) * (grid.columns - 1), 0, grid.columns - 1);
+  const rowPosition = clamped((point.y / grid.heightMeters + 0.5) * (grid.rows - 1), 0, grid.rows - 1);
   const column0 = Math.floor(columnPosition);
   const row0 = Math.floor(rowPosition);
   const column1 = Math.min(grid.columns - 1, column0 + 1);
@@ -94,7 +100,7 @@ export function elevationThresholds(grid: ElevationGrid) {
 
 export function elevationGridPoint(grid: ElevationGrid, row: number, column: number): BoardPoint {
   return {
-    x: -BOARD_WIDTH_METERS / 2 + (column / (grid.columns - 1)) * BOARD_WIDTH_METERS,
-    y: -BOARD_HEIGHT_METERS / 2 + (row / (grid.rows - 1)) * BOARD_HEIGHT_METERS,
+    x: -grid.widthMeters / 2 + (column / (grid.columns - 1)) * grid.widthMeters,
+    y: -grid.heightMeters / 2 + (row / (grid.rows - 1)) * grid.heightMeters,
   };
 }
