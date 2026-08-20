@@ -3,11 +3,9 @@
 import { useEffect, useRef } from "react";
 import type { CircleMarker, LayerGroup, Map as LeafletMap, Polygon } from "leaflet";
 import {
-  BOARD_COLUMNS,
-  BOARD_HEIGHT_METERS,
-  BOARD_ROWS,
-  BOARD_WIDTH_METERS,
+  boardDimensions,
   boardCorners,
+  boardSeamSegments,
   boardToGeo,
   hexCenterMeters,
   hexPolygonMeters,
@@ -18,6 +16,8 @@ import { levelAtPoint, type ElevationGrid } from "./elevation-engine";
 type GeoMapProps = {
   place: GeoPoint;
   bearing: number;
+  boardCols: number;
+  boardRows: number;
   elevationGrid: ElevationGrid | null;
   showElevation: boolean;
   onCenterChange: (center: GeoPoint) => void;
@@ -27,17 +27,17 @@ function centersMatch(a: GeoPoint, b: GeoPoint) {
   return Math.abs(a.lat - b.lat) < 0.0000005 && Math.abs(a.lon - b.lon) < 0.0000005;
 }
 
-export default function GeoMap({ place, bearing, elevationGrid, showElevation, onCenterChange }: GeoMapProps) {
+export default function GeoMap({ place, bearing, boardCols, boardRows, elevationGrid, showElevation, onCenterChange }: GeoMapProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<LeafletMap | null>(null);
   const outlineRef = useRef<Polygon | null>(null);
   const centerRef = useRef<CircleMarker | null>(null);
   const gridRef = useRef<LayerGroup | null>(null);
   const leafletRef = useRef<typeof import("leaflet") | null>(null);
-  const currentRef = useRef({ place, bearing, elevationGrid, showElevation, onCenterChange });
+  const currentRef = useRef({ place, bearing, boardCols, boardRows, elevationGrid, showElevation, onCenterChange });
   const lastPlaceRef = useRef(place);
   const reportedCenterRef = useRef<GeoPoint>(place);
-  currentRef.current = { place, bearing, elevationGrid, showElevation, onCenterChange };
+  currentRef.current = { place, bearing, boardCols, boardRows, elevationGrid, showElevation, onCenterChange };
 
   function redrawBoard(
     nextPlace: GeoPoint,
@@ -45,20 +45,23 @@ export default function GeoMap({ place, bearing, elevationGrid, showElevation, o
     fit: boolean,
     nextElevationGrid = currentRef.current.elevationGrid,
     nextShowElevation = currentRef.current.showElevation,
+    nextBoardCols = currentRef.current.boardCols,
+    nextBoardRows = currentRef.current.boardRows,
   ) {
     const L = leafletRef.current;
     const map = mapRef.current;
     if (!L || !map) return;
 
-    const outline = boardCorners(nextPlace, nextBearing).map(({ lat, lon }) => [lat, lon] as [number, number]);
+    const dimensions = boardDimensions(nextBoardCols, nextBoardRows);
+    const outline = boardCorners(nextPlace, nextBearing, nextBoardCols, nextBoardRows).map(({ lat, lon }) => [lat, lon] as [number, number]);
     outlineRef.current?.setLatLngs(outline);
     centerRef.current?.setLatLng([nextPlace.lat, nextPlace.lon]);
 
     gridRef.current?.clearLayers();
-    for (let row = 0; row < BOARD_ROWS; row += 1) {
-      for (let col = 0; col < BOARD_COLUMNS; col += 1) {
-        const level = nextElevationGrid ? levelAtPoint(nextElevationGrid, hexCenterMeters(row, col)) : 0;
-        const cell = hexPolygonMeters(row, col)
+    for (let row = 0; row < dimensions.rows; row += 1) {
+      for (let col = 0; col < dimensions.columns; col += 1) {
+        const level = nextElevationGrid ? levelAtPoint(nextElevationGrid, hexCenterMeters(row, col, nextBoardCols, nextBoardRows)) : 0;
+        const cell = hexPolygonMeters(row, col, nextBoardCols, nextBoardRows)
           .map((point) => boardToGeo(point, nextPlace, nextBearing))
           .map(({ lat, lon }) => [lat, lon] as [number, number]);
         L.polygon(cell, {
@@ -71,6 +74,18 @@ export default function GeoMap({ place, bearing, elevationGrid, showElevation, o
           interactive: false,
         }).addTo(gridRef.current!);
       }
+    }
+    for (const segment of boardSeamSegments(nextBoardCols, nextBoardRows)) {
+      const points = segment
+        .map((point) => boardToGeo(point, nextPlace, nextBearing))
+        .map(({ lat, lon }) => [lat, lon] as [number, number]);
+      L.polyline(points, {
+        color: "#f2a06e",
+        weight: 2,
+        opacity: 0.9,
+        dashArray: "8 6",
+        interactive: false,
+      }).addTo(gridRef.current!);
     }
 
     if (fit && outlineRef.current) {
@@ -114,11 +129,19 @@ export default function GeoMap({ place, bearing, elevationGrid, showElevation, o
         interactive: false,
       }).addTo(map);
       mapRef.current = map;
-      redrawBoard(current.place, current.bearing, true, current.elevationGrid, current.showElevation);
+      redrawBoard(current.place, current.bearing, true, current.elevationGrid, current.showElevation, current.boardCols, current.boardRows);
 
       const syncBoardToMapCenter = () => {
         const center = map.getCenter();
-        redrawBoard({ lat: center.lat, lon: center.lng }, currentRef.current.bearing, false);
+        redrawBoard(
+          { lat: center.lat, lon: center.lng },
+          currentRef.current.bearing,
+          false,
+          currentRef.current.elevationGrid,
+          currentRef.current.showElevation,
+          currentRef.current.boardCols,
+          currentRef.current.boardRows,
+        );
       };
       const commitMapCenter = () => {
         const center = map.getCenter();
@@ -149,20 +172,22 @@ export default function GeoMap({ place, bearing, elevationGrid, showElevation, o
     const moved = lastPlaceRef.current.lat !== place.lat || lastPlaceRef.current.lon !== place.lon;
     const cameFromMap = centersMatch(place, reportedCenterRef.current);
     if (moved && !cameFromMap) reportedCenterRef.current = place;
-    redrawBoard(place, bearing, moved && !cameFromMap, elevationGrid, showElevation);
+    redrawBoard(place, bearing, moved && !cameFromMap, elevationGrid, showElevation, boardCols, boardRows);
     lastPlaceRef.current = place;
-  }, [bearing, elevationGrid, place, showElevation]);
+  }, [bearing, boardCols, boardRows, elevationGrid, place, showElevation]);
+
+  const dimensions = boardDimensions(boardCols, boardRows);
 
   return (
     <div className="geo-map-shell">
-      <div ref={containerRef} className="geo-map" aria-label="Draggable OpenStreetMap with fixed tactical mapboard footprint" />
+      <div ref={containerRef} className="geo-map" aria-label="Draggable OpenStreetMap with a multi-board tactical footprint" />
       <div className="map-navigation-hint" aria-hidden="true">
         <span>Drag to move board</span>
         <span>Wheel or ± to zoom</span>
       </div>
       <div className="map-scale-lock">
-        <strong>{BOARD_COLUMNS} × {BOARD_ROWS} / 50 M HEX</strong>
-        <span>{Math.round(BOARD_WIDTH_METERS)} × {Math.round(BOARD_HEIGHT_METERS)} M FIXED FOOTPRINT</span>
+        <strong>{dimensions.boardCols} × {dimensions.boardRows} BOARDS / {dimensions.columns} × {dimensions.rows} HEX FIELD</strong>
+        <span>{Math.round(dimensions.widthMeters)} × {Math.round(dimensions.heightMeters)} M FIXED FOOTPRINT</span>
       </div>
     </div>
   );

@@ -3,14 +3,14 @@ const OVERPASS_ENDPOINTS = [
   "https://overpass-api.de/api/interpreter",
 ];
 
-function buildQuery(lat: number, lon: number) {
+function buildQuery(lat: number, lon: number, radius: number) {
   return `[out:json][timeout:25];(
-    way["building"](around:480,${lat},${lon});
-    way["highway"](around:480,${lat},${lon});
-    way["natural"="wood"](around:480,${lat},${lon});
-    way["landuse"~"forest|grass|meadow|recreation_ground"](around:480,${lat},${lon});
-    way["leisure"~"garden|park"](around:480,${lat},${lon});
-    node["natural"="tree"](around:480,${lat},${lon});
+    way["building"](around:${radius},${lat},${lon});
+    way["highway"](around:${radius},${lat},${lon});
+    way["natural"="wood"](around:${radius},${lat},${lon});
+    way["landuse"~"forest|grass|meadow|recreation_ground"](around:${radius},${lat},${lon});
+    way["leisure"~"garden|park"](around:${radius},${lat},${lon});
+    node["natural"="tree"](around:${radius},${lat},${lon});
   );out geom;`;
 }
 
@@ -18,11 +18,12 @@ export async function GET(request: Request) {
   const url = new URL(request.url);
   const lat = Number(url.searchParams.get("lat"));
   const lon = Number(url.searchParams.get("lon"));
+  const radius = Math.max(480, Math.min(2500, Math.round(Number(url.searchParams.get("radius")) || 480)));
   if (!Number.isFinite(lat) || !Number.isFinite(lon) || Math.abs(lat) > 90 || Math.abs(lon) > 180) {
     return Response.json({ error: "Invalid coordinates" }, { status: 400 });
   }
 
-  const query = buildQuery(lat, lon);
+  const query = buildQuery(lat, lon, radius);
   for (const endpoint of OVERPASS_ENDPOINTS) {
     try {
       const response = await fetch(`${endpoint}?data=${encodeURIComponent(query)}`, {

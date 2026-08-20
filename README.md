@@ -7,7 +7,8 @@
 Hexground turns real-world locations into playable tactical hex boards inspired
 by the terrain scale and vocabulary of the *Lock 'n Load Tactical* system. It
 uses mapped buildings, roads, paths, trees, and sampled elevation to produce a
-standard board with interactive controls and exportable artwork.
+standard board or a seamless 1 × 1 through 4 × 4 board mosaic with interactive
+controls, continuous terrain, seam guides, and exportable artwork.
 
 ## Local development
 

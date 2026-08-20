@@ -1,12 +1,11 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import {
   BOARD_ASPECT_RATIO,
-  BOARD_COLUMNS,
-  BOARD_HEIGHT_METERS,
-  BOARD_ROWS,
-  BOARD_WIDTH_METERS,
+  boardDimensions,
+  boardHexAddress,
+  boardSeamSegments,
   hexCenterMeters,
   hexPolygonMeters,
   type BoardPoint,
@@ -23,6 +22,9 @@ import type { Layer, ProjectedFeature } from "./terrain-engine";
 
 type Props = {
   bearing: number;
+  boardCols: number;
+  boardRows: number;
+  boardName: string;
   features: ProjectedFeature[];
   layers: Record<Layer, boolean>;
   elevationGrid: ElevationGrid | null;
@@ -30,16 +32,12 @@ type Props = {
   onSelectHex: (coordinate: string) => void;
 };
 
-const WIDTH = 1400;
-const HEIGHT = Math.round(WIDTH / BOARD_ASPECT_RATIO);
+const WIDTH_PER_BOARD = 1400;
+const HEIGHT_PER_BOARD = Math.round(WIDTH_PER_BOARD / BOARD_ASPECT_RATIO);
 
 function hash(value: number) {
   const result = Math.sin(value * 12.9898) * 43758.5453;
   return result - Math.floor(result);
-}
-
-function coordinateFor(row: number, col: number) {
-  return `${String.fromCharCode(65 + col)}${row + 1}`;
 }
 
 function pointInPolygon(point: BoardPoint, polygon: BoardPoint[]) {
@@ -54,19 +52,22 @@ function pointInPolygon(point: BoardPoint, polygon: BoardPoint[]) {
   return inside;
 }
 
-export default function TacticalBoard({ bearing, features, layers, elevationGrid, selectedHex, onSelectHex }: Props) {
+export default function TacticalBoard({ bearing, boardCols, boardRows, boardName, features, layers, elevationGrid, selectedHex, onSelectHex }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const dimensions = useMemo(() => boardDimensions(boardCols, boardRows), [boardCols, boardRows]);
+  const width = WIDTH_PER_BOARD * dimensions.boardCols;
+  const height = HEIGHT_PER_BOARD * dimensions.boardRows;
 
   useEffect(() => {
     const canvas = canvasRef.current;
     const context = canvas?.getContext("2d");
     if (!canvas || !context) return;
 
-    const scaleX = canvas.width / BOARD_WIDTH_METERS;
-    const scaleY = canvas.height / BOARD_HEIGHT_METERS;
+    const scaleX = canvas.width / dimensions.widthMeters;
+    const scaleY = canvas.height / dimensions.heightMeters;
     const mapPoint = ({ x, y }: BoardPoint) => ({
-      x: (x + BOARD_WIDTH_METERS / 2) * scaleX,
-      y: (y + BOARD_HEIGHT_METERS / 2) * scaleY,
+      x: (x + dimensions.widthMeters / 2) * scaleX,
+      y: (y + dimensions.heightMeters / 2) * scaleY,
     });
     const trace = (points: BoardPoint[], close = false) => {
       if (!points.length) return;
@@ -94,8 +95,8 @@ export default function TacticalBoard({ bearing, features, layers, elevationGrid
     }
 
     if (layers.elevation && elevationGrid) {
-      const reliefWidth = 350;
-      const reliefHeight = Math.round(reliefWidth / BOARD_ASPECT_RATIO);
+      const reliefWidth = 350 * dimensions.boardCols;
+      const reliefHeight = Math.round((350 / BOARD_ASPECT_RATIO) * dimensions.boardRows);
       const relief = document.createElement("canvas");
       relief.width = reliefWidth;
       relief.height = reliefHeight;
@@ -111,8 +112,8 @@ export default function TacticalBoard({ bearing, features, layers, elevationGrid
         for (let y = 0; y < reliefHeight; y += 1) {
           for (let x = 0; x < reliefWidth; x += 1) {
             const boardPoint = {
-              x: (x / (reliefWidth - 1) - 0.5) * BOARD_WIDTH_METERS,
-              y: (y / (reliefHeight - 1) - 0.5) * BOARD_HEIGHT_METERS,
+              x: (x / (reliefWidth - 1) - 0.5) * dimensions.widthMeters,
+              y: (y / (reliefHeight - 1) - 0.5) * dimensions.heightMeters,
             };
             const level = elevationLevel(elevationGrid, elevationAtPoint(elevationGrid, boardPoint));
             const offset = (y * reliefWidth + x) * 4;
@@ -248,9 +249,9 @@ export default function TacticalBoard({ bearing, features, layers, elevationGrid
       const second = `${b.x.toFixed(4)},${b.y.toFixed(4)}`;
       return first < second ? `${first}|${second}` : `${second}|${first}`;
     };
-    for (let row = 0; row < BOARD_ROWS; row += 1) {
-      for (let col = 0; col < BOARD_COLUMNS; col += 1) {
-        const polygon = hexPolygonMeters(row, col);
+    for (let row = 0; row < dimensions.rows; row += 1) {
+      for (let col = 0; col < dimensions.columns; col += 1) {
+        const polygon = hexPolygonMeters(row, col, dimensions.boardCols, dimensions.boardRows);
         polygon.forEach((a, index) => {
           const b = polygon[(index + 1) % polygon.length];
           edges.set(edgeKey(a, b), [a, b]);
@@ -272,18 +273,18 @@ export default function TacticalBoard({ bearing, features, layers, elevationGrid
 
     context.textAlign = "center";
     context.textBaseline = "middle";
-    for (let row = 0; row < BOARD_ROWS; row += 1) {
-      for (let col = 0; col < BOARD_COLUMNS; col += 1) {
-        const center = mapPoint(hexCenterMeters(row, col));
+    for (let row = 0; row < dimensions.rows; row += 1) {
+      for (let col = 0; col < dimensions.columns; col += 1) {
+        const center = mapPoint(hexCenterMeters(row, col, dimensions.boardCols, dimensions.boardRows));
         context.fillStyle = "rgba(8,10,7,.9)";
         context.beginPath();
         context.arc(center.x, center.y, Math.max(3.2, 1.35 * scaleX), 0, Math.PI * 2);
         context.fill();
         context.font = `700 ${Math.max(9, 3.6 * scaleX)}px ui-monospace, monospace`;
         context.fillStyle = "rgba(16,18,13,.72)";
-        context.fillText(coordinateFor(row, col), center.x, center.y - 13 * scaleY);
+        context.fillText(boardHexAddress(row, col, dimensions.boardCols, dimensions.boardRows), center.x, center.y - 13 * scaleY);
         if (layers.elevation && elevationGrid) {
-          const level = levelAtPoint(elevationGrid, hexCenterMeters(row, col));
+          const level = levelAtPoint(elevationGrid, hexCenterMeters(row, col, dimensions.boardCols, dimensions.boardRows));
           if (level > 0) {
             context.font = `900 ${Math.max(8, 3.2 * scaleX)}px ui-monospace, monospace`;
             context.fillStyle = "rgba(241,226,191,.82)";
@@ -304,27 +305,59 @@ export default function TacticalBoard({ bearing, features, layers, elevationGrid
       context.fillText(label, 26, 30);
     }
 
-    for (let row = 0; row < BOARD_ROWS; row += 1) {
-      for (let col = 0; col < BOARD_COLUMNS; col += 1) {
-        if (coordinateFor(row, col) !== selectedHex) continue;
-        trace(hexPolygonMeters(row, col), true);
+    if (dimensions.boardCount > 1) {
+      context.save();
+      context.strokeStyle = "rgba(244,235,211,.78)";
+      context.lineWidth = Math.max(3, 1.35 * scaleX);
+      context.setLineDash([20 * scaleX, 13 * scaleX]);
+      context.beginPath();
+      for (const [a, b] of boardSeamSegments(dimensions.boardCols, dimensions.boardRows)) {
+        const start = mapPoint(a);
+        const end = mapPoint(b);
+        context.moveTo(start.x, start.y);
+        context.lineTo(end.x, end.y);
+      }
+      context.stroke();
+      context.setLineDash([]);
+      context.textAlign = "left";
+      context.textBaseline = "bottom";
+      context.font = `900 ${Math.max(13, 5.1 * scaleX)}px ui-monospace, monospace`;
+      for (let boardRow = 0; boardRow < dimensions.boardRows; boardRow += 1) {
+        for (let boardCol = 0; boardCol < dimensions.boardCols; boardCol += 1) {
+          const label = `${boardName.toUpperCase().slice(0, 18)} ${boardRow + 1}-${boardCol + 1}`;
+          const x = boardCol * WIDTH_PER_BOARD + 24;
+          const y = (boardRow + 1) * HEIGHT_PER_BOARD - 22;
+          const labelWidth = context.measureText(label).width;
+          context.fillStyle = "rgba(12,14,10,.72)";
+          context.fillRect(x - 8, y - 31, labelWidth + 16, 35);
+          context.fillStyle = "rgba(240,233,211,.92)";
+          context.fillText(label, x, y);
+        }
+      }
+      context.restore();
+    }
+
+    for (let row = 0; row < dimensions.rows; row += 1) {
+      for (let col = 0; col < dimensions.columns; col += 1) {
+        if (boardHexAddress(row, col, dimensions.boardCols, dimensions.boardRows) !== selectedHex) continue;
+        trace(hexPolygonMeters(row, col, dimensions.boardCols, dimensions.boardRows), true);
         context.lineWidth = Math.max(3, 1.4 * scaleX);
         context.strokeStyle = "#e46f2d";
         context.stroke();
       }
     }
-  }, [elevationGrid, features, layers, selectedHex]);
+  }, [boardName, dimensions, elevationGrid, features, layers, selectedHex]);
 
   function selectFromPointer(event: React.PointerEvent<HTMLCanvasElement>) {
     const rect = event.currentTarget.getBoundingClientRect();
     const candidate = {
-      x: ((event.clientX - rect.left) / rect.width) * BOARD_WIDTH_METERS - BOARD_WIDTH_METERS / 2,
-      y: ((event.clientY - rect.top) / rect.height) * BOARD_HEIGHT_METERS - BOARD_HEIGHT_METERS / 2,
+      x: ((event.clientX - rect.left) / rect.width) * dimensions.widthMeters - dimensions.widthMeters / 2,
+      y: ((event.clientY - rect.top) / rect.height) * dimensions.heightMeters - dimensions.heightMeters / 2,
     };
-    for (let row = 0; row < BOARD_ROWS; row += 1) {
-      for (let col = 0; col < BOARD_COLUMNS; col += 1) {
-        if (pointInPolygon(candidate, hexPolygonMeters(row, col))) {
-          onSelectHex(coordinateFor(row, col));
+    for (let row = 0; row < dimensions.rows; row += 1) {
+      for (let col = 0; col < dimensions.columns; col += 1) {
+        if (pointInPolygon(candidate, hexPolygonMeters(row, col, dimensions.boardCols, dimensions.boardRows))) {
+          onSelectHex(boardHexAddress(row, col, dimensions.boardCols, dimensions.boardRows));
           return;
         }
       }
@@ -332,8 +365,8 @@ export default function TacticalBoard({ bearing, features, layers, elevationGrid
   }
 
   return (
-    <div className="continuous-board" style={{ "--board-aspect": BOARD_ASPECT_RATIO } as React.CSSProperties}>
-      <canvas id="tactical-board-canvas" ref={canvasRef} width={WIDTH} height={HEIGHT} onPointerDown={selectFromPointer} role="grid" aria-label="Continuous tactical terrain with a tessellated hex grid" />
+    <div className="continuous-board" style={{ "--board-aspect": dimensions.aspectRatio } as React.CSSProperties}>
+      <canvas id="tactical-board-canvas" ref={canvasRef} width={width} height={height} onPointerDown={selectFromPointer} role="grid" aria-label={`${dimensions.boardCols} by ${dimensions.boardRows} continuous tactical board mosaic with a tessellated hex grid`} />
       <span className="north-mark">
         <i style={{ "--north-rotation": `${-bearing}deg` } as React.CSSProperties} aria-hidden="true">↑</i>
         <span>N / {String(bearing).padStart(3, "0")}° BRG</span>

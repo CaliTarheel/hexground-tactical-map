@@ -40,3 +40,13 @@ test("the terrain surface interpolates height and assigns four-metre LnL levels"
 test("incomplete elevation responses are rejected instead of fabricating relief", () => {
   assert.equal(createElevationGrid([100, 101, 102]), null);
 });
+
+test("one elevation surface spans the complete multi-board mosaic", () => {
+  const samples = elevationSampleLocations(center, 15, 4, 3);
+  assert.equal(samples.length, ELEVATION_SAMPLE_COUNT);
+  const grid = createElevationGrid(Array.from({ length: ELEVATION_SAMPLE_COUNT }, (_, index) => 80 + index), undefined, 90, 4, 3);
+  assert.ok(grid);
+  assert.equal(grid.boardCols, 4);
+  assert.equal(grid.boardRows, 3);
+  assert.ok(grid.widthMeters > grid.heightMeters);
+});

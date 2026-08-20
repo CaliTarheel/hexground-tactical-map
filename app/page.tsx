@@ -12,9 +12,9 @@ import {
 } from "./elevation-engine";
 import {
   BOARD_COLUMNS,
-  BOARD_HEIGHT_METERS,
   BOARD_ROWS,
-  BOARD_WIDTH_METERS,
+  boardDimensions,
+  boardHexAddress,
   hexCenterMeters,
   hexPolygonMeters,
 } from "./map-geometry";
@@ -75,6 +75,8 @@ export default function Home() {
   const [density, setDensity] = useState(2);
   const scale = 50;
   const [bearing, setBearing] = useState(0);
+  const [boardCols, setBoardCols] = useState(1);
+  const [boardRows, setBoardRows] = useState(1);
   const [layers, setLayers] = useState<Record<Layer, boolean>>({
     buildings: true,
     roads: true,
@@ -89,23 +91,25 @@ export default function Home() {
   const [elevationGrid, setElevationGrid] = useState<ElevationGrid | null>(null);
   const [elevationState, setElevationState] = useState<"loading" | "ready" | "error">("loading");
   const [refreshKey, setRefreshKey] = useState(0);
+  const dimensions = useMemo(() => boardDimensions(boardCols, boardRows), [boardCols, boardRows]);
 
   useEffect(() => {
     const controller = new AbortController();
     setSourceState("loading");
     setStatus(`Reading OpenStreetMap geometry around ${place.label}…`);
+    const queryRadius = Math.ceil(Math.hypot(dimensions.widthMeters, dimensions.heightMeters) / 2 + 120);
     const query = `[out:json][timeout:25];(
-      way["building"](around:480,${place.lat},${place.lon});
-      way["highway"](around:480,${place.lat},${place.lon});
-      way["natural"="wood"](around:480,${place.lat},${place.lon});
-      way["landuse"~"forest|grass|meadow|recreation_ground"](around:480,${place.lat},${place.lon});
-      way["leisure"~"garden|park"](around:480,${place.lat},${place.lon});
-      node["natural"="tree"](around:480,${place.lat},${place.lon});
+      way["building"](around:${queryRadius},${place.lat},${place.lon});
+      way["highway"](around:${queryRadius},${place.lat},${place.lon});
+      way["natural"="wood"](around:${queryRadius},${place.lat},${place.lon});
+      way["landuse"~"forest|grass|meadow|recreation_ground"](around:${queryRadius},${place.lat},${place.lon});
+      way["leisure"~"garden|park"](around:${queryRadius},${place.lat},${place.lon});
+      node["natural"="tree"](around:${queryRadius},${place.lat},${place.lon});
     );out geom;`;
     const isDefaultPlace = Math.abs(place.lat - DEFAULT_PLACE.lat) < 0.00001 && Math.abs(place.lon - DEFAULT_PLACE.lon) < 0.00001;
     const sources = [
-      ...(isDefaultPlace ? ["/data/hamilton-hall-osm.json"] : []),
-      `/api/osm?lat=${place.lat}&lon=${place.lon}`,
+      ...(isDefaultPlace && dimensions.boardCount === 1 ? ["/data/hamilton-hall-osm.json"] : []),
+      `/api/osm?lat=${place.lat}&lon=${place.lon}&radius=${queryRadius}`,
       `https://overpass.kumi.systems/api/interpreter?data=${encodeURIComponent(query)}`,
       `https://overpass-api.de/api/interpreter?data=${encodeURIComponent(query)}`,
     ];
@@ -130,7 +134,7 @@ export default function Home() {
         const elements = payload.elements ?? [];
         setOsmElements(elements);
         setSourceState("ready");
-        setStatus(`${elements.length.toLocaleString()} OpenStreetMap features aligned to the board`);
+        setStatus(`${elements.length.toLocaleString()} OpenStreetMap features aligned to the ${dimensions.boardCols} × ${dimensions.boardRows} board mosaic`);
       })
       .catch((error: unknown) => {
         if (error instanceof DOMException && error.name === "AbortError") return;
@@ -139,13 +143,13 @@ export default function Home() {
         setStatus("OpenStreetMap geometry is temporarily unavailable — no terrain was invented");
       });
     return () => controller.abort();
-  }, [place.label, place.lat, place.lon, refreshKey]);
+  }, [dimensions, place.label, place.lat, place.lon, refreshKey]);
 
   useEffect(() => {
     const controller = new AbortController();
     setElevationState("loading");
     const timer = window.setTimeout(() => {
-      const samples = elevationSampleLocations(place, bearing);
+      const samples = elevationSampleLocations(place, bearing, boardCols, boardRows);
       const coordinates = samples.map(({ geoPoint }) => geoPoint);
       const loadElevation = async () => {
         try {
@@ -168,7 +172,7 @@ export default function Home() {
       };
       void loadElevation()
         .then(({ elevations = [], source, resolutionMeters }) => {
-          const grid = createElevationGrid(elevations, source, resolutionMeters);
+          const grid = createElevationGrid(elevations, source, resolutionMeters, boardCols, boardRows);
           if (!grid) throw new Error("Incomplete elevation surface");
           setElevationGrid(grid);
           setElevationState("ready");
@@ -185,31 +189,35 @@ export default function Home() {
       window.clearTimeout(timer);
       controller.abort();
     };
-  }, [bearing, place.lat, place.lon, refreshKey]);
+  }, [bearing, boardCols, boardRows, place.lat, place.lon, refreshKey]);
 
   const projectedFeatures = useMemo(() => {
     return projectOsmFeatures(osmElements, place, bearing);
   }, [bearing, osmElements, place]);
 
   const hexes = useMemo(() => {
-    return Array.from({ length: BOARD_ROWS }, (_, row) =>
-      Array.from({ length: BOARD_COLUMNS }, (_, col) => {
-        const coordinate = `${String.fromCharCode(65 + col)}${row + 1}`;
+    return Array.from({ length: dimensions.rows }, (_, row) =>
+      Array.from({ length: dimensions.columns }, (_, col) => {
+        const coordinate = boardHexAddress(row, col, boardCols, boardRows);
         const interpreted = terrainFromFeatures(
-          hexCenterMeters(row, col),
-          hexPolygonMeters(row, col),
+          hexCenterMeters(row, col, boardCols, boardRows),
+          hexPolygonMeters(row, col, boardCols, boardRows),
           projectedFeatures,
           density,
           layers,
         );
         const terrain = interpreted.terrain;
-        const center = hexCenterMeters(row, col);
+        const center = hexCenterMeters(row, col, boardCols, boardRows);
         const elevation = elevationGrid ? elevationAtPoint(elevationGrid, center) : null;
         const level = elevationGrid ? levelAtPoint(elevationGrid, center) : 0;
         return { row, col, coordinate, terrain, routeAngle: interpreted.routeAngle, elevation, level };
       }),
     ).flat();
-  }, [density, elevationGrid, layers, projectedFeatures]);
+  }, [boardCols, boardRows, density, dimensions, elevationGrid, layers, projectedFeatures]);
+
+  useEffect(() => {
+    setSelectedHex(boardHexAddress(3, 6, boardCols, boardRows));
+  }, [boardCols, boardRows]);
 
   const terrainCounts = useMemo(() => {
     const counts = hexes.reduce<Record<Terrain, number>>(
@@ -286,16 +294,27 @@ export default function Home() {
     setStatus(`Board center moved to ${center.lat.toFixed(5)}, ${center.lon.toFixed(5)}`);
   }
 
+  function updateBoardLayout(axis: "cols" | "rows", value: number) {
+    if (axis === "cols") setBoardCols(value);
+    else setBoardRows(value);
+    setStatus("Board layout updated — refreshing the enlarged footprint");
+  }
+
   function downloadSpec() {
     const payload = {
-      schema: "hexground-board-spec/v1",
+      schema: "hexground-board-spec/v2",
       source: place,
       board: {
-        columns: BOARD_COLUMNS,
-        rows: BOARD_ROWS,
+        boardsWide: dimensions.boardCols,
+        boardsHigh: dimensions.boardRows,
+        boardCount: dimensions.boardCount,
+        columnsPerBoard: BOARD_COLUMNS,
+        rowsPerBoard: BOARD_ROWS,
+        columns: dimensions.columns,
+        rows: dimensions.rows,
         metersPerHex: scale,
         bearingDegrees: bearing,
-        footprintMeters: { width: BOARD_WIDTH_METERS, height: BOARD_HEIGHT_METERS },
+        footprintMeters: { width: dimensions.widthMeters, height: dimensions.heightMeters },
       },
       interpretation: {
         geometrySource: "OpenStreetMap",
@@ -318,7 +337,7 @@ export default function Home() {
     const url = URL.createObjectURL(file);
     const anchor = document.createElement("a");
     anchor.href = url;
-    anchor.download = `${place.label.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-board.json`;
+    anchor.download = `${place.label.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-${dimensions.boardCols}x${dimensions.boardRows}-boards.json`;
     anchor.click();
     URL.revokeObjectURL(url);
     setStatus("Board specification downloaded");
@@ -345,7 +364,7 @@ export default function Home() {
     context.font = "900 31px ui-monospace, monospace";
     context.textAlign = "left";
     context.textBaseline = "middle";
-    context.fillText("HH—01", margin, output.height - 48);
+    context.fillText(`${dimensions.boardCols}×${dimensions.boardRows} MOSAIC`, margin, output.height - 48);
 
     const northX = output.width - 156;
     const northY = 54;
@@ -381,7 +400,7 @@ export default function Home() {
       const url = URL.createObjectURL(blob);
       const anchor = document.createElement("a");
       anchor.href = url;
-      anchor.download = `${place.label.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-hh-01.png`;
+      anchor.download = `${place.label.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-${dimensions.boardCols}x${dimensions.boardRows}-boards.png`;
       anchor.click();
       URL.revokeObjectURL(url);
       setStatus(`High-resolution PNG exported at ${output.width} × ${output.height} px`);
@@ -399,7 +418,7 @@ export default function Home() {
           <span>PROTO—01</span>
           <span>{scale} M / HEX</span>
           <span>{formatBearing(bearing)}° BRG</span>
-          <span>14 × 8</span>
+          <span>{dimensions.boardCols} × {dimensions.boardRows} BOARDS</span>
         </div>
         <button className="quiet-button" onClick={downloadSpec}>Download spec</button>
       </header>
@@ -409,7 +428,7 @@ export default function Home() {
         <h1>Build a battlefield<br />from somewhere real.</h1>
         <p className="intro-copy">
           Locate a place. Read its buildings, roads, woods and relief. Resolve it into a board that follows the
-          Lock ’n Load Tactical language: approximately 50 meters per hex on a standard 14 × 8 field.
+          Lock ’n Load Tactical language: approximately 50 meters per hex on one board or a seamless multi-board mosaic.
         </p>
         <ol className="steps" aria-label="Map creation steps">
           <li className="is-active"><span>01</span> Locate</li>
@@ -446,6 +465,8 @@ export default function Home() {
           <GeoMap
             place={place}
             bearing={bearing}
+            boardCols={boardCols}
+            boardRows={boardRows}
             elevationGrid={elevationGrid}
             showElevation={layers.elevation}
             onCenterChange={moveBoardCenter}
@@ -486,6 +507,26 @@ export default function Home() {
                 <span>Ground scale</span>
                 <strong>50 m / hex</strong>
                 <small>Locked system scale</small>
+              </div>
+              <div className="board-layout-control" aria-label="Board mosaic layout">
+                <span>Board layout</span>
+                <div>
+                  <label>
+                    <small>Wide</small>
+                    <select aria-label="Boards wide" value={boardCols} onChange={(event) => updateBoardLayout("cols", Number(event.target.value))}>
+                      {[1, 2, 3, 4].map((value) => <option key={value} value={value}>{value}</option>)}
+                    </select>
+                  </label>
+                  <b aria-hidden="true">×</b>
+                  <label>
+                    <small>High</small>
+                    <select aria-label="Boards high" value={boardRows} onChange={(event) => updateBoardLayout("rows", Number(event.target.value))}>
+                      {[1, 2, 3, 4].map((value) => <option key={value} value={value}>{value}</option>)}
+                    </select>
+                  </label>
+                </div>
+                <strong>{dimensions.boardCount} {dimensions.boardCount === 1 ? "board" : "boards"} · {dimensions.columns} × {dimensions.rows} hexes</strong>
+                <small>{Math.round(dimensions.widthMeters)} × {Math.round(dimensions.heightMeters)} m footprint</small>
               </div>
               <label className="range-label" htmlFor="density">
                 <span>Canopy simplification <b>0{density}</b></span>
@@ -543,7 +584,7 @@ export default function Home() {
           <div className="panel-heading board-heading">
             <div>
               <p className="panel-kicker">02 / TACTICAL RESOLUTION</p>
-              <h2>{place.label} / HH—01</h2>
+              <h2>{place.label} / {dimensions.boardCols} × {dimensions.boardRows} mosaic</h2>
             </div>
             <div className="board-actions">
               <button type="button" onClick={() => rotateBoard(bearing + 15)}>Rotate +15°</button>
@@ -556,6 +597,9 @@ export default function Home() {
           <div className="board-wrap">
             <TacticalBoard
               bearing={bearing}
+              boardCols={boardCols}
+              boardRows={boardRows}
+              boardName={place.label}
               features={projectedFeatures}
               layers={layers}
               elevationGrid={elevationGrid}
@@ -606,7 +650,7 @@ export default function Home() {
           the terrain into disconnected tiles.
         </p>
         <dl>
-          <div><dt>112</dt><dd>Playable hexes</dd></div>
+          <div><dt>{dimensions.columns * dimensions.rows}</dt><dd>Playable hexes across {dimensions.boardCount} {dimensions.boardCount === 1 ? "board" : "boards"}</dd></div>
           <div><dt>{scale} M</dt><dd>Nominal hex width</dd></div>
           <div><dt>{centerElevation === null ? "—" : `${Math.round(centerElevation)} M`}</dt><dd>Board-center elevation</dd></div>
         </dl>

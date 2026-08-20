@@ -7,7 +7,10 @@ import {
   BOARD_WIDTH_METERS,
   HEX_HEIGHT_METERS,
   HEX_WIDTH_METERS,
+  boardDimensions,
   boardCorners,
+  boardHexAddress,
+  boardSeamSegments,
   hexLayout,
   hexPolygonMeters,
 } from "../app/map-geometry.ts";
@@ -61,4 +64,20 @@ test("every neighboring pair shares exactly one complete edge", () => {
       assert.equal(shared(edges(row, col), edges(row, col + 1)), 1);
     }
   }
+});
+
+test("multi-board layouts preserve native boards inside one continuous footprint", () => {
+  const dimensions = boardDimensions(4, 3);
+  assert.equal(dimensions.boardCount, 12);
+  assert.equal(dimensions.columns, BOARD_COLUMNS * 4);
+  assert.equal(dimensions.rows, BOARD_ROWS * 3);
+  assert.equal(dimensions.widthMeters, BOARD_WIDTH_METERS * 4);
+  assert.equal(dimensions.heightMeters, BOARD_HEIGHT_METERS * 3);
+  assert.equal(boardSeamSegments(4, 3).length, 5);
+  assert.equal(boardHexAddress(0, 0, 4, 3), "1-1 A1");
+  assert.equal(boardHexAddress(BOARD_ROWS, BOARD_COLUMNS, 4, 3), "2-2 A1");
+
+  const corners = boardCorners(center, 37, 4, 3);
+  assert.ok(Math.abs(distanceMeters(corners[0], corners[1]) - BOARD_WIDTH_METERS * 4) < 12);
+  assert.ok(Math.abs(distanceMeters(corners[1], corners[2]) - BOARD_HEIGHT_METERS * 3) < 12);
 });
